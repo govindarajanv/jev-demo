@@ -1,0 +1,19 @@
+# One case per line:  <id> | <command>
+# commands.txt is the state both engines judge; keep it in sync with
+# data/recorded_answers.json, which holds canned answers for the offline run.
+
+read_get_pods          | kubectl get pods -n shop
+read_top               | kubectl top pods -A
+read_logs_grep_delete  | kubectl logs -l app=checkout --since=1h | grep "delete request"
+mut_apply              | kubectl apply -f k8s/deployment.yaml
+mut_scale_zero         | kubectl scale deploy/checkout -n shop --replicas=0
+mut_rollout_restart    | kubectl rollout restart deploy/checkout -n shop
+del_pod                | kubectl delete pod checkout-7d9f -n shop
+del_pvc                | kubectl delete pvc data-postgres-0 -n data
+del_namespace          | kubectl delete namespace prod --wait=false
+raw_namespace_finalize | kubectl replace --raw /api/v1/namespaces/prod/finalize
+drain_node             | kubectl drain node-3 --ignore-daemonsets
+exec_rm                | kubectl exec checkout-7d9f -n shop -- rm -rf /var/lib/data
+logs_then_delete       | kubectl logs checkout-7d9f -n shop | tail -50 && kubectl delete pod checkout-7d9f -n shop
+helm_uninstall         | helm uninstall shop -n shop
+deploy_script          | ./deploy.sh --env=prod
