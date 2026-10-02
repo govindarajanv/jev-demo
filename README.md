@@ -36,6 +36,99 @@ turns judgments into actions. Only the source of the judgment changes:
   goes on the wire.
 - `jev_demo/config.py` — the `.env` reader and the settings lookup.
 
+## The flow
+
+
+```mermaid
+flowchart TD
+    cases["data/commands.txt<br/>one command per line"] --> run["main.py<br/>--engine auto|sdk|http|chat|recorded"]
+
+    run --> key{"TYPESAFE_API_KEY<br/>set?"}
+    key -- no --> rec["RecordedEngine<br/>replays data/recorded_answers.json<br/>no network, no cost"]
+    key -- yes --> jev["JevEngine<br/>one request per command"]
+
+    jev --> build{"transport"}
+    build -- "sdk, when installed" --> sdkt["typesafe-sdk"]
+    build -- "auto, no sdk" --> sysone["POST /v1/systemone"]
+    sysone -- "404 / 405" --> chat["POST /v1/chat/completions<br/>response_format.questions"]
+    sdkt --> answers["typed answers"]
+    chat --> answers
+    rec --> answers
+
+    answers --> norm["Judgments<br/>risk, confidence,<br/>data_loss, blast_radius"]
+
+    kw["KeywordEngine<br/>verb lists + regexes<br/>always confidence 1.0"] --> norm
+
+    norm --> decide{"decide()<br/>the one and only policy"}
+    decide --> allow["ALLOW"]
+    decide --> confirm["CONFIRM"]
+    decide --> block["BLOCK"]
+    decide --> human["ASK_HUMAN"]
+
+    style decide fill:#2b2b2b,stroke:#f0a020,stroke-width:3px,color:#fff
+    style jev fill:#123a5c,stroke:#4a9fd8,color:#fff
+    style kw fill:#3a2a12,stroke:#d89b4a,color:#fff
+```
+
+Both engines produce the same five fields, so everything downstream of
+`Judgments` is identical no matter which one ran. Only the source of the
+judgment changes.
+
+### The request, and what comes back
+
+```mermaid
+flowchart LR
+    subgraph req["one request: one state, three questions"]
+        direction TB
+        st["state<br/>{id, command}"]
+        q1["risk · choice<br/>read_only / mutating / destructive / unknown"]
+        q2["data_loss · noul"]
+        q3["blast_radius · score<br/>one pod → whole cluster"]
+        st --> q1
+        st --> q2
+        st --> q3
+    end
+
+    q1 --> model(["jev<br/>parallel sampling"])
+
+    model --> a1["choice + probabilities + confidence"]
+    model --> a2["noul"]
+    model --> a3["score + legend + probabilities"]
+
+    a1 --> log["decisions.jsonl<br/>model, route, latency, tokens"]
+    a2 --> norm["Judgments"]
+    a3 --> norm
+    log --> norm
+
+    style model fill:#123a5c,stroke:#4a9fd8,color:#fff
+```
+
+### The policy
+
+```mermaid
+flowchart TD
+    start["Judgments in"] --> c1{"confidence < 0.50?"}
+    c1 -- yes --> human["ASK_HUMAN"]
+    c1 -- no --> c2{"risk = destructive?"}
+    c2 -- yes --> c3{"confidence >= 0.85?"}
+    c3 -- yes --> block["BLOCK"]
+    c3 -- no --> confirm["CONFIRM"]
+    c2 -- no --> c4{"risk = mutating?"}
+    c4 -- yes --> confirm
+    c4 -- no --> c5{"risk = read_only<br/>and confidence >= 0.85?"}
+    c5 -- yes --> allow["ALLOW"]
+    c5 -- no --> confirm
+
+    style human fill:#4a1f1f,stroke:#d86a6a,color:#fff
+    style block fill:#4a1f1f,stroke:#d86a6a,color:#fff
+    style allow fill:#1f4a2a,stroke:#6ad88a,color:#fff
+    style confirm fill:#4a4320,stroke:#d8c26a,color:#fff
+```
+
+Reading it: the keyword engine always answers with confidence 1.0, so it never
+reaches `ASK_HUMAN` and never softens a `BLOCK` into a `CONFIRM`. The jev
+engine's confidence is what moves commands between those branches.
+
 ## Run it
 
 Offline, no key needed (recorded answers, not live jev):
